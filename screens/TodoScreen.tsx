@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -6,41 +6,178 @@ import {
   FlatList,
   TouchableOpacity,
   SafeAreaView,
+  Alert,
 } from 'react-native';
 import { Todo, TaskStatus } from '../types/todo';
 import TodoItem from '../components/TodoItem';
 import AddTodoModal from '../components/AddTodoModalSimple';
 
-export default function TodoScreen() {
+const API_BASE_URL = 'http://localhost:8082';
+
+export default function TodoScreen({ navigation }: { navigation: any }) {
   const [todos, setTodos] = useState<Todo[]>([]);
   const [modalVisible, setModalVisible] = useState(false);
 
-  const handleAddTodo = (newTodo: Todo) => {
-    console.log('TodoScreen: handleAddTodo called with:', newTodo);
-    setTodos(prevTodos => {
-      const updatedTodos = [...prevTodos, newTodo];
-      console.log('TodoScreen: Updated todos array:', updatedTodos);
-      return updatedTodos;
-    });
+  useEffect(() => {
+    const ssid = sessionStorage.getItem("key");
+    if (!ssid) {
+      // Generate a dummy session ID for testing
+      const dummySessionId = "12345"; // Or use crypto.randomUUID()
+      sessionStorage.setItem("key", dummySessionId);
+      console.log("Generated dummy Session ID:", dummySessionId);
+    }
+    fetchTodos();
+  }, [navigation]);
+
+  const fetchTodos = async () => {
+    try {
+      const params = new URLSearchParams();
+      params.append("queryId", "GET_ALL");
+      const ssid = sessionStorage.getItem("key");
+      console.log("Session Id in API: ", ssid);
+
+      if (!ssid) {
+        Alert.alert("Error", "Session ID not found.");
+        return;
+      }
+
+      params.append("session_id", ssid);
+      const response = await fetch(`${API_BASE_URL}/api/todo?${params.toString()}`, {
+        method: "GET",
+        mode: "cors",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+      });
+
+      console.log("Response status:", response.status);
+      const jsonData = await response.json();
+      if (!response.ok) {
+        throw new Error(jsonData.message || "Failed to fetch todos");
+      }
+      const todosArray = Array.isArray(jsonData.resource) ? jsonData.resource : [];
+      setTodos(todosArray);
+    } catch (error) {
+      Alert.alert("Error", "Unable to load todos. Please try again.");
+      console.error("Fetch error:", error);
+    }
   };
 
-  const handleToggleComplete = (id: string) => {
-    setTodos(prevTodos =>
-      prevTodos.map(todo =>
-        todo.id === id
-          ? {
-              ...todo,
-              status: todo.status === TaskStatus.COMPLETED 
-                ? TaskStatus.PENDING 
-                : TaskStatus.COMPLETED
-            }
-          : todo
-      )
-    );
+  const handleAddTodo = async (newTodo: Todo) => {
+    try {
+      const params = new URLSearchParams();
+      const jsonString = JSON.stringify(newTodo);
+      const base64Encoded = btoa(jsonString);
+      params.append("resource", base64Encoded);
+      const ssid = sessionStorage.getItem("key");
+      if (!ssid) {
+        Alert.alert("Error", "Session ID not found.");
+        return;
+      }
+      params.append("session_id", ssid);
+
+      const response = await fetch(`${API_BASE_URL}/api/todo?${params.toString()}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+      });
+
+      if (!response.ok) throw new Error("Failed to add todo");
+      const jsonData = await response.json();
+      if (jsonData.errCode === 0) {
+        const addedTodo = jsonData.resource;
+        setTodos(prevTodos => [...prevTodos, addedTodo]);
+      } else {
+        throw new Error(jsonData.message || "Failed to add todo");
+      }
+    } catch (error) {
+      console.error("Add error:", error);
+      Alert.alert("Error", "Failed to add todo. Please try again.");
+    } finally {
+      setModalVisible(false);
+    }
   };
 
-  const handleDeleteTodo = (id: string) => {
-    setTodos(prevTodos => prevTodos.filter(todo => todo.id !== id));
+  const handleToggleComplete = async (id: string) => {
+    const todoToUpdate = todos.find(todo => todo.id === id);
+    if (!todoToUpdate) return;
+
+    const updatedStatus = todoToUpdate.status === TaskStatus.COMPLETED
+      ? TaskStatus.PENDING
+      : TaskStatus.COMPLETED;
+    const updatedTodo = { ...todoToUpdate, status: updatedStatus };
+
+    try {
+      const params = new URLSearchParams();
+      const jsonString = JSON.stringify(updatedTodo);
+      const base64Encoded = btoa(jsonString);
+      params.append("resource", base64Encoded);
+      const ssid = sessionStorage.getItem("key");
+      if (!ssid) {
+        Alert.alert("Error", "Session ID not found.");
+        return;
+      }
+      params.append("session_id", ssid);
+      params.append("action", "MODIFY");
+
+      const response = await fetch(`${API_BASE_URL}/api/todo/${id}?${params.toString()}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+      });
+
+      if (!response.ok) throw new Error("Failed to update todo");
+      const jsonData = await response.json();
+      if (jsonData.errCode === 0) {
+        const updatedTodoData = jsonData.resource;
+        setTodos(prevTodos =>
+          prevTodos.map(todo =>
+            todo.id === id ? updatedTodoData : todo
+          )
+        );
+      } else {
+        throw new Error(jsonData.message || "Failed to update todo");
+      }
+    } catch (error) {
+      console.error("Update error:", error);
+      Alert.alert("Error", "Failed to update todo. Please try again.");
+    }
+  };
+
+  const handleDeleteTodo = async (id: string) => {
+    try {
+      const params = new URLSearchParams();
+      const ssid = sessionStorage.getItem("key");
+      if (!ssid) {
+        Alert.alert("Error", "Session ID not found.");
+        return;
+      }
+      params.append("session_id", ssid);
+      params.append("action", "DELETE");
+      const jsonString = JSON.stringify({ id });
+      const base64Encoded = btoa(jsonString);
+      params.append("resource", base64Encoded);
+
+      const response = await fetch(`${API_BASE_URL}/api/todo/${id}?${params.toString()}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+      });
+
+      if (!response.ok) throw new Error("Failed to delete todo");
+      const jsonData = await response.json();
+      if (jsonData.errCode === 0) {
+        setTodos(prevTodos => prevTodos.filter(todo => todo.id !== id));
+      } else {
+        throw new Error(jsonData.message || "Failed to delete todo");
+      }
+    } catch (error) {
+      console.error("Delete error:", error);
+      Alert.alert("Error", "Failed to delete todo. Please try again.");
+    }
   };
 
   const renderTodoItem = ({ item }: { item: Todo }) => (
